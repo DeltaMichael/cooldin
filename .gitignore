@@ -1,0 +1,7 @@
+**/*.d
+**/*.cc
+**/grading
+**/*.flex
+**/mycoolc
+**/*.pl
+PA2/lexer
