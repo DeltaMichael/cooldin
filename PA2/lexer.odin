@@ -6,6 +6,7 @@ import "core:fmt"
 import "core:os"
 import "core:bufio"
 import "core:strings"
+import "core:unicode"
 
 LexerMode :: enum {
 	Normal,
@@ -16,15 +17,47 @@ LexerMode :: enum {
 
 Token :: struct {
 	lexeme: string,
+	type: TokenType,
 	lineno: int
+}
+
+TokenType :: enum {
+	NONE,
+	OBJECTID,
+	TYPEID,
+	INT_CONST,
+	ELSE,
+	CLASS,
+	FALSE,
+	FI,
+	IF,
+	IN,
+	INHERITS,
+	ISVOID,
+	LET,
+	LOOP,
+	POOL,
+	THEN,
+	WHILE,
+	CASE,
+	ESAC,
+	NEW,
+	OF,
+	NOT,
+	TRUE,
+	LTE,
+	GTE,
+	ASSIGN,
+	BOOL_CONST
 }
 
 Lexer :: struct {
 	reader: bufio.Reader,
 	word: strings.Builder,
-	keywords: map[string]string,
+	keywords: map[string]TokenType,
 	singles: map[rune]rune,
 	singles_with_double: map[rune]rune,
+	doubles: map[string]TokenType,
 	tokens: [dynamic]^Token,
 	lineno: int,
 	current: rune,
@@ -33,9 +66,10 @@ Lexer :: struct {
 	is_at_end: bool
 }
 
-new_token :: proc(lexeme: string, lineno: int) -> ^Token {
+new_token :: proc(lexeme: string, type: TokenType, lineno: int) -> ^Token {
 	out := new(Token)
 	out.lexeme = lexeme
+	out.type = type
 	out.lineno = lineno
 	return out
 }
@@ -48,25 +82,26 @@ new_lexer :: proc(reader: bufio.Reader) -> ^Lexer {
 	out.is_at_end = false
 	out.reader = reader
 	out.mode = .Normal
-	out.keywords = map[string]string {
-			"class" = "else",
-			"false" = "false",
-			"fi" = "fi",
-			"if" = "if",
-			"in" = "in",
-			"inherits" = "inherits",
-			"isvoid" = "isvoid",
-			"let" = "let",
-			"loop" = "loop",
-			"pool" = "pool",
-			"then" = "then",
-			"while" = "while",
-			"case" = "case",
-			"esac" = "esac",
-			"new" = "new",
-			"of" = "of",
-			"not" = "not",
-			"true" = "true",
+	out.keywords = map[string]TokenType {
+			"else" = .ELSE,
+			"class" = .CLASS,
+			"false" = .BOOL_CONST,
+			"fi" = .FI,
+			"if" = .IF,
+			"in" = .IN,
+			"inherits" = .INHERITS,
+			"isvoid" = .ISVOID,
+			"let" = .LET,
+			"loop" = .LOOP,
+			"pool" = .POOL,
+			"then" = .THEN,
+			"while" = .WHILE,
+			"case" = .CASE,
+			"esac" = .ESAC,
+			"new" = .NEW,
+			"of" = .OF,
+			"not" = .NOT,
+			"true" = .BOOL_CONST,
 	}
 	out.singles = map[rune]rune {
 		'{' = '{',
@@ -77,6 +112,7 @@ new_lexer :: proc(reader: bufio.Reader) -> ^Lexer {
 		'=' = '=',
 		';' = ';',
 		'.' = '.',
+		',' = ',',
 	}
 	out.singles_with_double = map[rune]rune {
 		'<' = '-',
@@ -84,6 +120,12 @@ new_lexer :: proc(reader: bufio.Reader) -> ^Lexer {
 		'(' = '*',
 		'/' = '/',
 	}
+	out.doubles = map[string]TokenType {
+		"<=" = .LTE,
+		">=" = .GTE,
+		"<-" = .ASSIGN,
+	}
+
 	lexer_read_char(out)
 	return out
 }
@@ -118,8 +160,20 @@ lexer_peek :: proc(lexer: ^Lexer) -> rune {
 lexer_save :: proc(lexer: ^Lexer) {
 	if strings.builder_len(lexer.word) > 0 {
 		word := strings.to_string(lexer.word)
-		fmt.println(word)
-		append(&lexer.tokens, new_token(strings.clone(word), lexer.lineno))
+		switch {
+		case strings.to_lower(word) in lexer.keywords:
+			append(&lexer.tokens, new_token(strings.clone(word), lexer.keywords[strings.to_lower(word)], lexer.lineno))
+		case word in lexer.doubles:
+			append(&lexer.tokens, new_token(strings.clone(word), lexer.doubles[word], lexer.lineno))
+		case unicode.is_number(rune(word[0])):
+			append(&lexer.tokens, new_token(strings.clone(word), .INT_CONST, lexer.lineno))
+		case len(word) == 1:
+			append(&lexer.tokens, new_token(strings.clone(word), .NONE, lexer.lineno))
+		case unicode.is_lower(rune(word[0])):
+			append(&lexer.tokens, new_token(strings.clone(word), .OBJECTID, lexer.lineno))
+		case unicode.is_upper(rune(word[0])):
+			append(&lexer.tokens, new_token(strings.clone(word), .TYPEID, lexer.lineno))
+		}
 		strings.builder_reset(&lexer.word)
 	}
 }
@@ -130,18 +184,14 @@ lexer_process :: proc(lexer: ^Lexer) {
 		lexer_save(lexer)
 		lexer_inc_lineno(lexer)
 	case lexer.current in lexer.singles:
-		if strings.builder_len(lexer.word) > 0 {
-			lexer_save(lexer)
-			lexer_inc_lineno(lexer)
-		}
+		lexer_save(lexer)
+		lexer_inc_lineno(lexer)
 		strings.write_rune(&lexer.word, lexer.current)
 		lexer_save(lexer)
 		lexer_inc_lineno(lexer)
 	case lexer.current in lexer.singles_with_double:
-		if strings.builder_len(lexer.word) > 0 {
-			lexer_save(lexer)
-			lexer_inc_lineno(lexer)
-		}
+		lexer_save(lexer)
+		lexer_inc_lineno(lexer)
 		switch {
 		case lexer.current == '>' && lexer.next == '=':
 			// GTE
@@ -166,6 +216,9 @@ lexer_process :: proc(lexer: ^Lexer) {
 			lexer_inc_lineno(lexer)
 		case lexer.current == '/' && lexer.next == '/':
 			// PROCESS SINGLE-LINE COMMENT
+			lexer_advance(lexer)
+			lexer_advance(lexer)
+			lexer.mode = .Comment
 		case lexer.current == '(' && lexer.next == '*':
 			// PROCESS MULTI-LINE COMMENT
 			lexer_advance(lexer)
@@ -180,6 +233,7 @@ lexer_process :: proc(lexer: ^Lexer) {
 		}
 	case lexer.current == '"':
 		// PROCESS STRING
+		lexer.mode = .String
 	case:
 		strings.write_rune(&lexer.word, lexer.current)
 	}
@@ -206,6 +260,12 @@ main :: proc() {
 					lexer_process(lexer)
 				case .Comment:
 					// process comment
+					lineno := lexer.lineno
+					for !lexer.is_at_end && lexer.lineno == lineno {
+						lexer_advance(lexer)
+						lexer_inc_lineno(lexer)
+					}
+					lexer.mode = .Normal
 				case .MultilineComment:
 					// process multi-line comment
 					counter := 1
@@ -227,12 +287,24 @@ main :: proc() {
 					}
 					lexer.mode = .Normal
 				case .String:
+					for !lexer.is_at_end && lexer.current != '"' {
+						lexer_advance(lexer)
+					}
+					// lexer_advance(lexer)
+					lexer_save(lexer)
+					lexer.mode = .Normal
 					// process string
 			}
 		}
 		fmt.printfln("#name \"%s\"", os.args[1])
 		for token in lexer.tokens {
-			fmt.printfln("#%d %s", token.lineno, token.lexeme)
+			if token.type == .NONE {
+				fmt.printfln("#%d '%s'", token.lineno, token.lexeme)
+			} else if token.type == .OBJECTID || token.type == .TYPEID  || token.type == .INT_CONST || token.type == .BOOL_CONST {
+				fmt.printfln("#%d %s %s", token.lineno, fmt.tprint(token.type), token.lexeme)
+			} else {
+				fmt.printfln("#%d %s", token.lineno, fmt.tprint(token.type))
+			}
 		}
 	}
 }
