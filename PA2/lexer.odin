@@ -344,6 +344,7 @@ main :: proc() {
 				case .String:
 					error_flag := false
 					string_closed := false
+					count := 0
 					str_loop: for !lexer.is_at_end {
 						switch lexer.current  {
 						case '\\':
@@ -352,10 +353,12 @@ main :: proc() {
 								strings.write_rune(&lexer.word, lexer.current)
 								lexer_advance(lexer)
 								strings.write_rune(&lexer.word, lexer.current)
+								count += 1
 								lexer_advance(lexer)
 							case '\n':
 								strings.write_rune(&lexer.word, lexer.current)
 								strings.write_rune(&lexer.word, 'n')
+								count += 1
 								lexer_advance(lexer)
 								lexer_inc_lineno(lexer)
 								lexer_advance(lexer)
@@ -369,38 +372,45 @@ main :: proc() {
 						case '\t':
 							strings.write_rune(&lexer.word, '\\')
 							strings.write_rune(&lexer.word, 't')
+							count += 1
 							lexer_advance(lexer)
 						case '\f':
 							strings.write_rune(&lexer.word, '\\')
 							strings.write_rune(&lexer.word, 'f')
+							count += 1
 							lexer_advance(lexer)
 						case '\022':
 							strings.write_rune(&lexer.word, '\\')
 							strings.write_rune(&lexer.word, '0')
 							strings.write_rune(&lexer.word, '2')
 							strings.write_rune(&lexer.word, '2')
+							count += 1
 							lexer_advance(lexer)
 						case '\033':
 							strings.write_rune(&lexer.word, '\\')
 							strings.write_rune(&lexer.word, '0')
 							strings.write_rune(&lexer.word, '3')
 							strings.write_rune(&lexer.word, '3')
+							count += 1
 							lexer_advance(lexer)
 						case '\013':
 							strings.write_rune(&lexer.word, '\\')
 							strings.write_rune(&lexer.word, '0')
 							strings.write_rune(&lexer.word, '1')
 							strings.write_rune(&lexer.word, '3')
+							count += 1
 							lexer_advance(lexer)
 						case '\015':
 							strings.write_rune(&lexer.word, '\\')
 							strings.write_rune(&lexer.word, '0')
 							strings.write_rune(&lexer.word, '1')
 							strings.write_rune(&lexer.word, '5')
+							count += 1
 							lexer_advance(lexer)
 						case '\b':
 							strings.write_rune(&lexer.word, '\\')
 							strings.write_rune(&lexer.word, 'b')
+							count += 1
 							lexer_advance(lexer)
 						case '"':
 							string_closed = true
@@ -408,6 +418,7 @@ main :: proc() {
 							break str_loop
 						case :
 							strings.write_rune(&lexer.word, lexer.current)
+							count += 1
 							lexer_advance(lexer)
 						}
 					}
@@ -417,6 +428,9 @@ main :: proc() {
 						} else {
 							lexer_save_err(lexer, "Unterminated string constant")
 						}
+						lexer_clear_word(lexer)
+					} else if count > 1024 {
+						lexer_save_err(lexer, "String constant too long")
 						lexer_clear_word(lexer)
 					} else {
 						lexer_save_str(lexer)
