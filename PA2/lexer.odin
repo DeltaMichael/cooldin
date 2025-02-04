@@ -234,7 +234,7 @@ lexer_process :: proc(lexer: ^Lexer) {
 			strings.write_rune(&lexer.word, lexer.current)
 			lexer_save(lexer)
 			lexer_inc_lineno(lexer)
-		case lexer.current == '/' && lexer.next == '/':
+		case lexer.current == '-' && lexer.next == '-':
 			// PROCESS SINGLE-LINE COMMENT
 			lexer_advance(lexer)
 			lexer_advance(lexer)
