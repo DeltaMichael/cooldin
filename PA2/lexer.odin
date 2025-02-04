@@ -98,6 +98,7 @@ new_lexer :: proc(reader: bufio.Reader) -> ^Lexer {
 	out.mode = .Normal
 	out.keywords = map[string]TokenType {
 			"else" = .ELSE,
+			"then" = .THEN,
 			"class" = .CLASS,
 			"false" = .BOOL_CONST,
 			"fi" = .FI,
@@ -108,7 +109,6 @@ new_lexer :: proc(reader: bufio.Reader) -> ^Lexer {
 			"let" = .LET,
 			"loop" = .LOOP,
 			"pool" = .POOL,
-			"then" = .THEN,
 			"while" = .WHILE,
 			"case" = .CASE,
 			"esac" = .ESAC,
@@ -123,7 +123,6 @@ new_lexer :: proc(reader: bufio.Reader) -> ^Lexer {
 		')' = ')',
 		'+' = '+',
 		'/' = '/',
-		'*' = '*',
 		';' = ';',
 		'.' = '.',
 		',' = ',',
@@ -134,6 +133,7 @@ new_lexer :: proc(reader: bufio.Reader) -> ^Lexer {
 	out.singles_with_double = map[rune]rune {
 		'<' = '-',
 		'(' = '*',
+		'*' = ')',
 		'-' = '-',
 		'=' = '>',
 	}
@@ -179,21 +179,28 @@ lexer_save :: proc(lexer: ^Lexer) {
 		word := strings.to_string(lexer.word)
 		switch {
 		case strings.to_lower(word) in lexer.keywords:
-			if rune(word[0]) == 'T' || rune(word[0]) == 'F' {
+			// BOOLEAN CONSTS WITH UPPERCASE FIRST LETTERS ARE TYPE IDs
+			if (strings.to_lower(word) == "true" && rune(word[0]) == 'T') || (strings.to_lower(word) == "false" && rune(word[0]) == 'F') {
 				append(&lexer.tokens, new_token(strings.clone(word), .TYPEID, lexer.lineno))
 			} else {
 				append(&lexer.tokens, new_token(strings.to_lower(word), lexer.keywords[strings.to_lower(word)], lexer.lineno))
 			}
+		// SPECIAL SYMBOLS MADE OF TWO CHARACTERS
 		case word in lexer.doubles:
 			append(&lexer.tokens, new_token(strings.clone(word), lexer.doubles[word], lexer.lineno))
+		// NUMBERS
 		case unicode.is_number(rune(word[0])):
 			append(&lexer.tokens, new_token(strings.clone(word), .INT_CONST, lexer.lineno))
+		// SPECIAL SYMBOLS MADE OF ONE CHARACTER
 		case len(word) == 1 && (rune(word[0]) in lexer.singles || rune(word[0]) in lexer.singles_with_double):
 			append(&lexer.tokens, new_token(strings.clone(word), .NONE, lexer.lineno))
+		// OBJECT IDENTIFIERS
 		case unicode.is_lower(rune(word[0])):
 			append(&lexer.tokens, new_token(strings.clone(word), .OBJECTID, lexer.lineno))
+		// TYPE IDENTIFIERS
 		case unicode.is_upper(rune(word[0])):
 			append(&lexer.tokens, new_token(strings.clone(word), .TYPEID, lexer.lineno))
+		// ERROR HANDLER
 		case:
 			lexer_save_err(lexer, word)
 		}
@@ -268,6 +275,8 @@ lexer_process :: proc(lexer: ^Lexer) {
 		case lexer.current == '*' && lexer.next == ')':
 			// ERROR
 			lexer_save_err(lexer, "Unmatched *)")
+			lexer_advance(lexer)
+			lexer_advance(lexer)
 		case:
 			strings.write_rune(&lexer.word, lexer.current)
 			lexer_save(lexer)
@@ -357,12 +366,36 @@ main :: proc() {
 							lexer_save_err(lexer, "Unterminated string constant")
 							lexer_clear_word(lexer)
 							error_flag = true
-							// lexer_advance(lexer)
 							break str_loop
+						case '\t':
+							strings.write_rune(&lexer.word, '\\')
+							strings.write_rune(&lexer.word, 't')
+							lexer_advance(lexer)
+						case '\f':
+							strings.write_rune(&lexer.word, '\\')
+							strings.write_rune(&lexer.word, 'f')
+							lexer_advance(lexer)
+						case '\022':
+							strings.write_rune(&lexer.word, '\\')
+							strings.write_rune(&lexer.word, '0')
+							strings.write_rune(&lexer.word, '2')
+							strings.write_rune(&lexer.word, '2')
+							lexer_advance(lexer)
+						case '\013':
+							strings.write_rune(&lexer.word, '\\')
+							strings.write_rune(&lexer.word, '0')
+							strings.write_rune(&lexer.word, '1')
+							strings.write_rune(&lexer.word, '3')
+							lexer_advance(lexer)
 						case :
 							strings.write_rune(&lexer.word, lexer.current)
 							lexer_advance(lexer)
 						}
+					}
+					if lexer.is_at_end && lexer.current != '"' {
+						lexer_save_err(lexer, "EOF in string constant")
+						lexer_clear_word(lexer)
+						error_flag = true
 					}
 					if !error_flag {
 						lexer_save_str(lexer)
