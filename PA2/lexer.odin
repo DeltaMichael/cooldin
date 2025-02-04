@@ -68,6 +68,18 @@ Lexer :: struct {
 	is_at_end: bool
 }
 
+is_in_charset :: proc(lexer: ^Lexer, character: rune) -> bool {
+	switch character {
+	case 'A'..='Z', 'a'..='z', '0'..='9', '_', '"', '\'':
+		return true
+	case '\n', '\r', '\t', '\v', ' ', '\f':
+		return true
+	}
+	if character in lexer.singles { return true }
+	if character in lexer.singles_with_double { return true }
+	return false
+}
+
 new_token :: proc(lexeme: string, type: TokenType, lineno: int) -> ^Token {
 	out := new(Token)
 	out.lexeme = lexeme
@@ -117,16 +129,15 @@ new_lexer :: proc(reader: bufio.Reader) -> ^Lexer {
 		'.' = '.',
 		',' = ',',
 		':' = ':',
+		'~' = '~',
 	}
 	out.singles_with_double = map[rune]rune {
 		'<' = '-',
-		'>' = '=',
 		'(' = '*',
 		'-' = '-',
 	}
 	out.doubles = map[string]TokenType {
 		"<=" = .LTE,
-		">=" = .GTE,
 		"<-" = .ASSIGN,
 	}
 
@@ -203,6 +214,10 @@ lexer_process :: proc(lexer: ^Lexer) {
 	case strings.is_space(lexer.current):
 		lexer_save(lexer)
 		lexer_inc_lineno(lexer)
+	case !is_in_charset(lexer, lexer.current):
+		lexer_save(lexer)
+		lexer_save_err(lexer, fmt.tprintf("%c", lexer.current))
+		lexer_inc_lineno(lexer)
 	case lexer.current in lexer.singles:
 		lexer_save(lexer)
 		lexer_inc_lineno(lexer)
@@ -213,13 +228,6 @@ lexer_process :: proc(lexer: ^Lexer) {
 		lexer_save(lexer)
 		lexer_inc_lineno(lexer)
 		switch {
-		case lexer.current == '>' && lexer.next == '=':
-			// GTE
-			strings.write_rune(&lexer.word, lexer.current)
-			lexer_advance(lexer)
-			strings.write_rune(&lexer.word, lexer.current)
-			lexer_save(lexer)
-			lexer_inc_lineno(lexer)
 		case lexer.current == '<' && lexer.next == '=':
 			// LTE
 			strings.write_rune(&lexer.word, lexer.current)
@@ -246,6 +254,7 @@ lexer_process :: proc(lexer: ^Lexer) {
 			lexer.mode = .MultilineComment
 		case lexer.current == '*' && lexer.next == ')':
 			// ERROR
+			lexer_save_err(lexer, "Unmatched *)")
 		case:
 			strings.write_rune(&lexer.word, lexer.current)
 			lexer_save(lexer)
@@ -303,8 +312,8 @@ main :: proc() {
 							lexer_inc_lineno(lexer)
 							break;
 						}
-						lexer_advance(lexer)
 						lexer_inc_lineno(lexer)
+						lexer_advance(lexer)
 					}
 					if lexer.is_at_end && counter > 0 {
 						lexer_save_err(lexer, "EOF in comment")
@@ -320,7 +329,6 @@ main :: proc() {
 					// process string
 			}
 		}
-		// lexer_save(lexer)
 		fmt.printfln("#name \"%s\"", os.args[1])
 		for token in lexer.tokens {
 			if token.type == .NONE {
