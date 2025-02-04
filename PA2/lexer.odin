@@ -26,6 +26,7 @@ TokenType :: enum {
 	OBJECTID,
 	TYPEID,
 	INT_CONST,
+	STR_CONST,
 	ELSE,
 	CLASS,
 	FALSE,
@@ -48,7 +49,8 @@ TokenType :: enum {
 	LTE,
 	GTE,
 	ASSIGN,
-	BOOL_CONST
+	BOOL_CONST,
+	ERROR
 }
 
 Lexer :: struct {
@@ -108,17 +110,19 @@ new_lexer :: proc(reader: bufio.Reader) -> ^Lexer {
 		'}' = '}',
 		')' = ')',
 		'+' = '+',
-		'-' = '-',
 		'=' = '=',
+		'/' = '/',
+		'*' = '*',
 		';' = ';',
 		'.' = '.',
 		',' = ',',
+		':' = ':',
 	}
 	out.singles_with_double = map[rune]rune {
 		'<' = '-',
 		'>' = '=',
 		'(' = '*',
-		'/' = '/',
+		'-' = '-',
 	}
 	out.doubles = map[string]TokenType {
 		"<=" = .LTE,
@@ -162,20 +166,36 @@ lexer_save :: proc(lexer: ^Lexer) {
 		word := strings.to_string(lexer.word)
 		switch {
 		case strings.to_lower(word) in lexer.keywords:
-			append(&lexer.tokens, new_token(strings.clone(word), lexer.keywords[strings.to_lower(word)], lexer.lineno))
+			if rune(word[0]) == 'T' || rune(word[0]) == 'F' {
+				append(&lexer.tokens, new_token(strings.clone(word), .TYPEID, lexer.lineno))
+			} else {
+				append(&lexer.tokens, new_token(strings.clone(word), lexer.keywords[strings.to_lower(word)], lexer.lineno))
+			}
 		case word in lexer.doubles:
 			append(&lexer.tokens, new_token(strings.clone(word), lexer.doubles[word], lexer.lineno))
 		case unicode.is_number(rune(word[0])):
 			append(&lexer.tokens, new_token(strings.clone(word), .INT_CONST, lexer.lineno))
-		case len(word) == 1:
+		case len(word) == 1 && (rune(word[0]) in lexer.singles || rune(word[0]) in lexer.singles_with_double):
 			append(&lexer.tokens, new_token(strings.clone(word), .NONE, lexer.lineno))
 		case unicode.is_lower(rune(word[0])):
 			append(&lexer.tokens, new_token(strings.clone(word), .OBJECTID, lexer.lineno))
 		case unicode.is_upper(rune(word[0])):
 			append(&lexer.tokens, new_token(strings.clone(word), .TYPEID, lexer.lineno))
+		case:
+			lexer_save_err(lexer, word)
 		}
 		strings.builder_reset(&lexer.word)
 	}
+}
+
+lexer_save_str :: proc(lexer: ^Lexer) {
+	word := strings.to_string(lexer.word)
+	append(&lexer.tokens, new_token(fmt.tprintf("\"%s\"", word), .STR_CONST, lexer.lineno))
+	strings.builder_reset(&lexer.word)
+}
+
+lexer_save_err :: proc(lexer: ^Lexer, message: string) {
+	append(&lexer.tokens, new_token(fmt.tprintf("\"%s\"",message), .ERROR, lexer.lineno))
 }
 
 lexer_process :: proc(lexer: ^Lexer) {
@@ -233,6 +253,7 @@ lexer_process :: proc(lexer: ^Lexer) {
 		}
 	case lexer.current == '"':
 		// PROCESS STRING
+		lexer_advance(lexer)
 		lexer.mode = .String
 	case:
 		strings.write_rune(&lexer.word, lexer.current)
@@ -285,22 +306,26 @@ main :: proc() {
 						lexer_advance(lexer)
 						lexer_inc_lineno(lexer)
 					}
+					if lexer.is_at_end && counter > 0 {
+						lexer_save_err(lexer, "EOF in comment")
+					}
 					lexer.mode = .Normal
 				case .String:
 					for !lexer.is_at_end && lexer.current != '"' {
+						strings.write_rune(&lexer.word, lexer.current)
 						lexer_advance(lexer)
 					}
-					// lexer_advance(lexer)
-					lexer_save(lexer)
+					lexer_save_str(lexer)
 					lexer.mode = .Normal
 					// process string
 			}
 		}
+		// lexer_save(lexer)
 		fmt.printfln("#name \"%s\"", os.args[1])
 		for token in lexer.tokens {
 			if token.type == .NONE {
 				fmt.printfln("#%d '%s'", token.lineno, token.lexeme)
-			} else if token.type == .OBJECTID || token.type == .TYPEID  || token.type == .INT_CONST || token.type == .BOOL_CONST {
+			} else if token.type == .OBJECTID || token.type == .TYPEID  || token.type == .INT_CONST || token.type == .BOOL_CONST  || token.type == .STR_CONST || token.type == .ERROR {
 				fmt.printfln("#%d %s %s", token.lineno, fmt.tprint(token.type), token.lexeme)
 			} else {
 				fmt.printfln("#%d %s", token.lineno, fmt.tprint(token.type))
