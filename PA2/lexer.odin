@@ -343,7 +343,8 @@ main :: proc() {
 					lexer.mode = .Normal
 				case .String:
 					error_flag := false
-					str_loop: for !lexer.is_at_end && lexer.current != '"' {
+					string_closed := false
+					str_loop: for !lexer.is_at_end {
 						switch lexer.current  {
 						case '\\':
 							switch lexer.next {
@@ -363,9 +364,7 @@ main :: proc() {
 							}
 						case '\n':
 							lexer_inc_lineno(lexer)
-							lexer_save_err(lexer, "Unterminated string constant")
 							lexer_clear_word(lexer)
-							error_flag = true
 							break str_loop
 						case '\t':
 							strings.write_rune(&lexer.word, '\\')
@@ -387,17 +386,23 @@ main :: proc() {
 							strings.write_rune(&lexer.word, '1')
 							strings.write_rune(&lexer.word, '3')
 							lexer_advance(lexer)
+						case '"':
+							string_closed = true
+							// lexer_advance(lexer)
+							break str_loop
 						case :
 							strings.write_rune(&lexer.word, lexer.current)
 							lexer_advance(lexer)
 						}
 					}
-					if lexer.is_at_end && lexer.current != '"' {
-						lexer_save_err(lexer, "EOF in string constant")
+					if !string_closed {
+						if lexer.is_at_end {
+							lexer_save_err(lexer, "EOF in string constant")
+						} else {
+							lexer_save_err(lexer, "Unterminated string constant")
+						}
 						lexer_clear_word(lexer)
-						error_flag = true
-					}
-					if !error_flag {
+					} else {
 						lexer_save_str(lexer)
 					}
 					lexer.mode = .Normal
