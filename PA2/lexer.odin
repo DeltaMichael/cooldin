@@ -222,6 +222,14 @@ lexer_clear_word :: proc(lexer: ^Lexer) {
 	strings.builder_reset(&lexer.word)
 }
 
+// Types of tokens to process
+// 1. Single-Char Operators
+// 2. Double-Char Operators
+// 3. Type identifiers -> start with lower-case
+// 4. Object identifiers -> start with upper-case
+// 5. Bool constatnts -> start with lower-case (true, false, tRUE, faLsE, etc.)
+// 6. Keywords -> in keywords table
+// 7. Integers -> [0-9]{1}[0-9]*
 lexer_process :: proc(lexer: ^Lexer) {
 	switch {
 	case strings.is_space(lexer.current):
