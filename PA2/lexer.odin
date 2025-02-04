@@ -180,7 +180,7 @@ lexer_save :: proc(lexer: ^Lexer) {
 			if rune(word[0]) == 'T' || rune(word[0]) == 'F' {
 				append(&lexer.tokens, new_token(strings.clone(word), .TYPEID, lexer.lineno))
 			} else {
-				append(&lexer.tokens, new_token(strings.clone(word), lexer.keywords[strings.to_lower(word)], lexer.lineno))
+				append(&lexer.tokens, new_token(strings.to_lower(word), lexer.keywords[strings.to_lower(word)], lexer.lineno))
 			}
 		case word in lexer.doubles:
 			append(&lexer.tokens, new_token(strings.clone(word), lexer.doubles[word], lexer.lineno))
@@ -329,6 +329,7 @@ main :: proc() {
 					// process string
 			}
 		}
+		lexer_save(lexer)
 		fmt.printfln("#name \"%s\"", os.args[1])
 		for token in lexer.tokens {
 			if token.type == .NONE {
