@@ -46,8 +46,8 @@ TokenType :: enum {
 	OF,
 	NOT,
 	TRUE,
-	LTE,
-	GTE,
+	LE,
+	DARROW,
 	ASSIGN,
 	BOOL_CONST,
 	ERROR
@@ -70,7 +70,7 @@ Lexer :: struct {
 
 is_in_charset :: proc(lexer: ^Lexer, character: rune) -> bool {
 	switch character {
-	case 'A'..='Z', 'a'..='z', '0'..='9', '_', '"', '\'':
+	case 'A'..='Z', 'a'..='z', '0'..='9', '_', '"', '\'', '>':
 		return true
 	case '\n', '\r', '\t', '\v', ' ', '\f':
 		return true
@@ -122,7 +122,6 @@ new_lexer :: proc(reader: bufio.Reader) -> ^Lexer {
 		'}' = '}',
 		')' = ')',
 		'+' = '+',
-		'=' = '=',
 		'/' = '/',
 		'*' = '*',
 		';' = ';',
@@ -130,15 +129,18 @@ new_lexer :: proc(reader: bufio.Reader) -> ^Lexer {
 		',' = ',',
 		':' = ':',
 		'~' = '~',
+		'@' = '@',
 	}
 	out.singles_with_double = map[rune]rune {
 		'<' = '-',
 		'(' = '*',
 		'-' = '-',
+		'=' = '>',
 	}
 	out.doubles = map[string]TokenType {
-		"<=" = .LTE,
+		"<=" = .LE,
 		"<-" = .ASSIGN,
+		"=>" = .DARROW,
 	}
 
 	lexer_read_char(out)
@@ -209,6 +211,10 @@ lexer_save_err :: proc(lexer: ^Lexer, message: string) {
 	append(&lexer.tokens, new_token(fmt.tprintf("\"%s\"",message), .ERROR, lexer.lineno))
 }
 
+lexer_clear_word :: proc(lexer: ^Lexer) {
+	strings.builder_reset(&lexer.word)
+}
+
 lexer_process :: proc(lexer: ^Lexer) {
 	switch {
 	case strings.is_space(lexer.current):
@@ -229,7 +235,7 @@ lexer_process :: proc(lexer: ^Lexer) {
 		lexer_inc_lineno(lexer)
 		switch {
 		case lexer.current == '<' && lexer.next == '=':
-			// LTE
+			// LE
 			strings.write_rune(&lexer.word, lexer.current)
 			lexer_advance(lexer)
 			strings.write_rune(&lexer.word, lexer.current)
@@ -237,6 +243,13 @@ lexer_process :: proc(lexer: ^Lexer) {
 			lexer_inc_lineno(lexer)
 		case lexer.current == '<' && lexer.next == '-':
 			// ASSIGNMENT
+			strings.write_rune(&lexer.word, lexer.current)
+			lexer_advance(lexer)
+			strings.write_rune(&lexer.word, lexer.current)
+			lexer_save(lexer)
+			lexer_inc_lineno(lexer)
+		case lexer.current == '=' && lexer.next == '>':
+			// DARROW
 			strings.write_rune(&lexer.word, lexer.current)
 			lexer_advance(lexer)
 			strings.write_rune(&lexer.word, lexer.current)
@@ -320,11 +333,40 @@ main :: proc() {
 					}
 					lexer.mode = .Normal
 				case .String:
-					for !lexer.is_at_end && lexer.current != '"' {
-						strings.write_rune(&lexer.word, lexer.current)
-						lexer_advance(lexer)
+					error_flag := false
+					str_loop: for !lexer.is_at_end && lexer.current != '"' {
+						switch lexer.current  {
+						case '\\':
+							switch lexer.next {
+							case 'n', 'b', 't', 'f', '\\', '"':
+								strings.write_rune(&lexer.word, lexer.current)
+								lexer_advance(lexer)
+								strings.write_rune(&lexer.word, lexer.current)
+								lexer_advance(lexer)
+							case '\n':
+								strings.write_rune(&lexer.word, lexer.current)
+								strings.write_rune(&lexer.word, 'n')
+								lexer_advance(lexer)
+								lexer_inc_lineno(lexer)
+								lexer_advance(lexer)
+							case:
+								lexer_advance(lexer)
+							}
+						case '\n':
+							lexer_inc_lineno(lexer)
+							lexer_save_err(lexer, "Unterminated string constant")
+							lexer_clear_word(lexer)
+							error_flag = true
+							// lexer_advance(lexer)
+							break str_loop
+						case :
+							strings.write_rune(&lexer.word, lexer.current)
+							lexer_advance(lexer)
+						}
 					}
-					lexer_save_str(lexer)
+					if !error_flag {
+						lexer_save_str(lexer)
+					}
 					lexer.mode = .Normal
 					// process string
 			}
@@ -332,11 +374,12 @@ main :: proc() {
 		lexer_save(lexer)
 		fmt.printfln("#name \"%s\"", os.args[1])
 		for token in lexer.tokens {
-			if token.type == .NONE {
+			#partial switch token.type {
+			case .NONE:
 				fmt.printfln("#%d '%s'", token.lineno, token.lexeme)
-			} else if token.type == .OBJECTID || token.type == .TYPEID  || token.type == .INT_CONST || token.type == .BOOL_CONST  || token.type == .STR_CONST || token.type == .ERROR {
+			case .OBJECTID, .TYPEID, .INT_CONST, .BOOL_CONST, .STR_CONST, .ERROR:
 				fmt.printfln("#%d %s %s", token.lineno, fmt.tprint(token.type), token.lexeme)
-			} else {
+			case:
 				fmt.printfln("#%d %s", token.lineno, fmt.tprint(token.type))
 			}
 		}
