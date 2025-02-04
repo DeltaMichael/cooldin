@@ -380,11 +380,27 @@ main :: proc() {
 							strings.write_rune(&lexer.word, '2')
 							strings.write_rune(&lexer.word, '2')
 							lexer_advance(lexer)
+						case '\033':
+							strings.write_rune(&lexer.word, '\\')
+							strings.write_rune(&lexer.word, '0')
+							strings.write_rune(&lexer.word, '3')
+							strings.write_rune(&lexer.word, '3')
+							lexer_advance(lexer)
 						case '\013':
 							strings.write_rune(&lexer.word, '\\')
 							strings.write_rune(&lexer.word, '0')
 							strings.write_rune(&lexer.word, '1')
 							strings.write_rune(&lexer.word, '3')
+							lexer_advance(lexer)
+						case '\015':
+							strings.write_rune(&lexer.word, '\\')
+							strings.write_rune(&lexer.word, '0')
+							strings.write_rune(&lexer.word, '1')
+							strings.write_rune(&lexer.word, '5')
+							lexer_advance(lexer)
+						case '\b':
+							strings.write_rune(&lexer.word, '\\')
+							strings.write_rune(&lexer.word, 'b')
 							lexer_advance(lexer)
 						case '"':
 							string_closed = true
