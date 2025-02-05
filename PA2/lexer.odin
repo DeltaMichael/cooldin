@@ -301,6 +301,8 @@ lexer_process :: proc(lexer: ^Lexer) {
 		case:
 			if lexer.current == '\\' {
 				lexer_save_err(lexer, fmt.tprintf("\\%c", lexer.current))
+			} else if int(lexer.current) <= 31 {
+				lexer_save_err(lexer, fmt.tprintf("\\%03d", int(lexer.current)))
 			} else {
 				lexer_save_err(lexer, fmt.tprintf("%c", lexer.current))
 			}
