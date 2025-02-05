@@ -299,7 +299,11 @@ lexer_process :: proc(lexer: ^Lexer) {
 			lexer_advance(lexer)
 			lexer.mode = .String
 		case:
-			lexer_save_err(lexer, fmt.tprintf("%c", lexer.current))
+			if lexer.current == '\\' {
+				lexer_save_err(lexer, fmt.tprintf("\\%c", lexer.current))
+			} else {
+				lexer_save_err(lexer, fmt.tprintf("%c", lexer.current))
+			}
 		}
 	}
 
