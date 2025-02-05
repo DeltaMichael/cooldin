@@ -263,7 +263,6 @@ lexer_handle_double_operator :: proc(lexer: ^Lexer) {
 		// ERROR
 		lexer_save_err(lexer, "Unmatched *)")
 		lexer_advance(lexer)
-		lexer_advance(lexer)
 	case:
 		// MUST BE A SINGLE OPERATOR THEN
 		strings.write_rune(&lexer.word, lexer.current)
@@ -360,9 +359,8 @@ main :: proc() {
 						}
 						if counter == 0 {
 							lexer_advance(lexer)
-							lexer_advance(lexer)
 							lexer_inc_lineno(lexer)
-							break;
+							break
 						}
 						lexer_advance(lexer)
 						lexer_inc_lineno(lexer)
