@@ -343,7 +343,7 @@ main :: proc() {
 				case .Comment:
 					// process comment
 					lineno := lexer.lineno
-					for !lexer.is_at_end && lexer.lineno == lineno {
+					for !lexer.is_at_end && lexer.current != '\n' {
 						lexer_advance(lexer)
 						lexer_inc_lineno(lexer)
 					}
