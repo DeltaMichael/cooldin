@@ -191,7 +191,7 @@ lexer_save :: proc(lexer: ^Lexer) {
 		to_lower := strings.to_lower(word)
 		if to_lower in lexer.keywords {
 			if lexer.current_type == .TYPEID && (to_lower == "true" || to_lower == "false") {
-				append(&lexer.tokens, new_token(to_lower, .TYPEID, lexer.lineno))
+				append(&lexer.tokens, new_token(strings.clone(word), .TYPEID, lexer.lineno))
 			} else {
 				append(&lexer.tokens, new_token(to_lower, lexer.keywords[to_lower], lexer.lineno))
 			}
