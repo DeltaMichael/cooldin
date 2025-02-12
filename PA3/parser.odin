@@ -43,6 +43,12 @@ new_matcher :: proc() -> ^Matcher {
 	return out
 }
 
+new_empty_matcher :: proc() -> ^Matcher {
+	out := new_matcher()
+	matcher_append(out, new_token("empty", .Empty))
+	return out
+}
+
 new_production :: proc() -> ^Production {
 	out := new(Production)
 	out.matchers = make([dynamic]^Matcher)
@@ -67,10 +73,55 @@ grammar_insert :: proc(grammar: ^Grammar, name: string, production: ^Production)
 	grammar.productions[name] = production
 }
 
+production_elr :: proc(grammar: ^Grammar, name: string, production: ^Production) {
+	betas := make([dynamic]^Matcher)
+	alphas := make([dynamic]^Matcher)
+	for matcher in production.matchers {
+		if matcher.tokens[0].value == name {
+			append(&alphas, matcher)
+		} else {
+			append(&betas, matcher)
+		}
+	}
+
+	if len(alphas) == 0 {
+		grammar_insert(grammar, strings.clone(name), production)
+		return
+	}
+	for matcher in betas {
+		append(&matcher.tokens, new_token(fmt.tprintf("%s_p", name), .Production))
+	}
+
+	for matcher in alphas {
+		unordered_remove(&matcher.tokens, 0)
+		append(&matcher.tokens, new_token(fmt.tprintf("%s_p", name), .Production))
+	}
+
+	original := new_production()
+	original.matchers = betas
+
+	prime := new_production()
+	prime.matchers = alphas
+	production_append(prime, new_empty_matcher())
+
+	grammar_insert(grammar, fmt.tprintf("%s_p", name), prime)
+	grammar_insert(grammar, strings.clone(name), original)
+}
+
+grammar_elr :: proc(grammar: ^Grammar) -> ^Grammar {
+	out := new_grammar()
+	for key, value in grammar.productions {
+		production_elr(out, key, value)
+	}
+	return out
+}
+
 matcher_from_string :: proc(input: string) -> ^Matcher{
 	tokens, err := strings.split(input, " ")
 	if err != nil {
 		// handle error
+		fmt.printfln("Could not split matcher %s into tokens", input)
+		os.exit(1)
 	}
 	matcher := new_matcher()
 	for token in tokens {
@@ -141,11 +192,13 @@ main :: proc() {
 			}
 			if local[0] == '|' {
 				if prod_current_name == "" {
-					// handle error
+					fmt.println("Grammar needs to start with a production")
+					os.exit(1)
 				}
 				match_strings, err := strings.split(local, "|")
 				if err != nil {
-					// handle error
+					fmt.printfln("Could not split individual productions for %s", local)
+					os.exit(1)
 				}
 				for i := 1; i < len(match_strings); i += 1 {
 					matcher := matcher_from_string(strings.trim_space(match_strings[i]))
@@ -154,10 +207,12 @@ main :: proc() {
 			} else {
 				tokens, ps_err := strings.split(local, "::=")
 				if ps_err != nil {
-					// handle error
+					fmt.printfln("Could not split production %s", local)
+					os.exit(1)
 				}
 				if len(tokens) != 2 {
-					// handle error
+					fmt.println("Production should have format name ::= matcher1 | matcher 2, etc.")
+					os.exit(1)
 				}
 				// push the previous production if any
 				if prod_current_name != "" {
@@ -170,7 +225,8 @@ main :: proc() {
 				all_matchers_string := strings.trim_space(tokens[1])
 				match_strings, ms_err := strings.split(tokens[1], "|")
 				if ms_err != nil {
-					// handle error
+					fmt.printfln("Could not split %s into individual matchers", local)
+					os.exit(1)
 				}
 				for match_string in match_strings {
 					matcher := matcher_from_string(strings.trim_space(match_string))
@@ -180,7 +236,8 @@ main :: proc() {
 		}
 	}
 	grammar_insert(grammar, strings.clone(prod_current_name), prod_current)
-	print_grammar(grammar)
+	elr_grammar := grammar_elr(grammar)
+	print_grammar(elr_grammar)
 
 
 	// reader: bufio.Reader
