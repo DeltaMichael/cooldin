@@ -108,6 +108,42 @@ production_elr :: proc(grammar: ^Grammar, name: string, production: ^Production)
 	grammar_insert(grammar, strings.clone(name), original)
 }
 
+first_set :: proc(grammar: ^Grammar, token: ^Token) -> map[string]string {
+	out := make(map[string]string)
+	if token.type == .Terminal || token.type == .Operator || token.type == .Empty {
+		out[token.value] = token.value
+	} else if token.type == .Production {
+		production := grammar.productions[token.value]
+		for matcher in production.matchers {
+			count := 0
+			for token in matcher.tokens {
+				first := first_set(grammar, token)
+				for k,v in first {
+					out[k] = v
+				}
+				if !("empty" in first) {
+					break
+				} else {
+					count += 1
+					delete_key(&first, "empty")
+				}
+			}
+			if count == len(matcher.tokens) {
+				out["empty"] = "empty"
+			}
+		}
+	}
+	return out
+}
+
+get_first_sets :: proc(grammar: ^Grammar) -> map[string]map[string]string {
+	out := make(map[string]map[string]string)
+	for key, _ in grammar.productions {
+		out[key] = first_set(grammar, new_token(key, .Production))
+	}
+	return out
+}
+
 grammar_elr :: proc(grammar: ^Grammar) -> ^Grammar {
 	out := new_grammar()
 	for key, value in grammar.productions {
@@ -158,6 +194,14 @@ print_grammar :: proc(grammar: ^Grammar) {
 	for key, value in grammar.productions {
 		fmt.printf("%s ::= ", key)
 		print_production(value)
+		fmt.printf("\n")
+	}
+	first_sets := get_first_sets(grammar)
+	for k, v in first_sets {
+		fmt.printf("%s -> ", k)
+		for key, value in v {
+			fmt.printf("%s, ", key)
+		}
 		fmt.printf("\n")
 	}
 }
