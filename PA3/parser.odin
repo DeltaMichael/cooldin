@@ -19,11 +19,13 @@ Token :: struct {
 }
 
 Production :: struct {
+	name: string,
 	matchers: [dynamic]^Matcher,
 }
 
 Grammar :: struct {
-	productions: map[string]^Production
+	productions: [dynamic]^Production,
+	index: map[string]^Production
 }
 
 Matcher :: struct {
@@ -49,15 +51,17 @@ new_empty_matcher :: proc() -> ^Matcher {
 	return out
 }
 
-new_production :: proc() -> ^Production {
+new_production :: proc(name: string) -> ^Production {
 	out := new(Production)
+	out.name = name
 	out.matchers = make([dynamic]^Matcher)
 	return out
 }
 
 new_grammar :: proc() -> ^Grammar {
 	out := new(Grammar)
-	out.productions = make(map[string]^Production)
+	out.productions = make([dynamic]^Production)
+	out.index = make(map[string]^Production)
 	return out
 }
 
@@ -69,15 +73,16 @@ production_append :: proc(production: ^Production, matcher: ^Matcher) {
 	append(&production.matchers, matcher)
 }
 
-grammar_insert :: proc(grammar: ^Grammar, name: string, production: ^Production) {
-	grammar.productions[name] = production
+grammar_insert :: proc(grammar: ^Grammar, production: ^Production) {
+	append(&grammar.productions, production)
+	grammar.index[production.name] = production
 }
 
-production_elr :: proc(grammar: ^Grammar, name: string, production: ^Production) {
+production_elr :: proc(grammar: ^Grammar, production: ^Production) {
 	betas := make([dynamic]^Matcher)
 	alphas := make([dynamic]^Matcher)
 	for matcher in production.matchers {
-		if matcher.tokens[0].value == name {
+		if matcher.tokens[0].value == production.name {
 			append(&alphas, matcher)
 		} else {
 			append(&betas, matcher)
@@ -85,27 +90,27 @@ production_elr :: proc(grammar: ^Grammar, name: string, production: ^Production)
 	}
 
 	if len(alphas) == 0 {
-		grammar_insert(grammar, strings.clone(name), production)
+		grammar_insert(grammar, production)
 		return
 	}
 	for matcher in betas {
-		append(&matcher.tokens, new_token(fmt.tprintf("%s_p", name), .Production))
+		append(&matcher.tokens, new_token(fmt.tprintf("%s_p", production.name), .Production))
 	}
 
 	for matcher in alphas {
 		unordered_remove(&matcher.tokens, 0)
-		append(&matcher.tokens, new_token(fmt.tprintf("%s_p", name), .Production))
+		append(&matcher.tokens, new_token(fmt.tprintf("%s_p", production.name), .Production))
 	}
 
-	original := new_production()
+	original := new_production(strings.clone(production.name))
 	original.matchers = betas
 
-	prime := new_production()
+	prime := new_production(fmt.tprintf("%s_p", production.name))
 	prime.matchers = alphas
 	production_append(prime, new_empty_matcher())
 
-	grammar_insert(grammar, fmt.tprintf("%s_p", name), prime)
-	grammar_insert(grammar, strings.clone(name), original)
+	grammar_insert(grammar, prime)
+	grammar_insert(grammar, original)
 }
 
 first_set :: proc(grammar: ^Grammar, token: ^Token) -> map[string]string {
@@ -113,7 +118,7 @@ first_set :: proc(grammar: ^Grammar, token: ^Token) -> map[string]string {
 	if token.type == .Terminal || token.type == .Operator || token.type == .Empty {
 		out[token.value] = token.value
 	} else if token.type == .Production {
-		production := grammar.productions[token.value]
+		production := grammar.index[token.value]
 		for matcher in production.matchers {
 			count := 0
 			for token in matcher.tokens {
@@ -138,16 +143,16 @@ first_set :: proc(grammar: ^Grammar, token: ^Token) -> map[string]string {
 
 get_first_sets :: proc(grammar: ^Grammar) -> map[string]map[string]string {
 	out := make(map[string]map[string]string)
-	for key, _ in grammar.productions {
-		out[key] = first_set(grammar, new_token(key, .Production))
+	for prod in grammar.productions {
+		out[prod.name] = first_set(grammar, new_token(prod.name, .Production))
 	}
 	return out
 }
 
 grammar_elr :: proc(grammar: ^Grammar) -> ^Grammar {
 	out := new_grammar()
-	for key, value in grammar.productions {
-		production_elr(out, key, value)
+	for prod in grammar.productions {
+		production_elr(out, prod)
 	}
 	return out
 }
@@ -183,18 +188,18 @@ print_matcher :: proc(matcher: ^Matcher) {
 }
 
 print_production :: proc(production: ^Production) {
+	fmt.printf("%s ::= ", production.name)
 	print_matcher(production.matchers[0])
 	for i := 1; i < len(production.matchers); i += 1 {
 		fmt.printf("\n\t| ")
 		print_matcher(production.matchers[i])
 	}
+	fmt.printf("\n")
 }
 
 print_grammar :: proc(grammar: ^Grammar) {
-	for key, value in grammar.productions {
-		fmt.printf("%s ::= ", key)
-		print_production(value)
-		fmt.printf("\n")
+	for prod in grammar.productions {
+		print_production(prod)
 	}
 	first_sets := get_first_sets(grammar)
 	for k, v in first_sets {
@@ -219,8 +224,7 @@ main :: proc() {
     defer bufio.reader_destroy(&grammar_reader)
 
 	grammar := new_grammar()
-	prod_current := new_production()
-	prod_current_name := ""
+	prod_current := new_production("")
 
 	for {
 		line, err := bufio.reader_read_string(&grammar_reader, '\n', context.allocator)
@@ -235,7 +239,7 @@ main :: proc() {
 				continue;
 			}
 			if local[0] == '|' {
-				if prod_current_name == "" {
+				if prod_current.name == "" {
 					fmt.println("Grammar needs to start with a production")
 					os.exit(1)
 				}
@@ -259,12 +263,11 @@ main :: proc() {
 					os.exit(1)
 				}
 				// push the previous production if any
-				if prod_current_name != "" {
-					grammar_insert(grammar, strings.clone(prod_current_name), prod_current)
+				if prod_current.name != "" {
+					grammar_insert(grammar, prod_current)
 				}
 				// and start a new one
-				prod_current = new_production()
-				prod_current_name = strings.clone(strings.trim_space(tokens[0]))
+				prod_current = new_production(strings.clone(strings.trim_space(tokens[0])))
 
 				all_matchers_string := strings.trim_space(tokens[1])
 				match_strings, ms_err := strings.split(tokens[1], "|")
@@ -279,7 +282,7 @@ main :: proc() {
 			}
 		}
 	}
-	grammar_insert(grammar, strings.clone(prod_current_name), prod_current)
+	grammar_insert(grammar, prod_current)
 	elr_grammar := grammar_elr(grammar)
 	print_grammar(elr_grammar)
 
