@@ -9,6 +9,14 @@ import "core:unicode"
 ProductionSet :: map[string]string
 GrammarSets :: map[string]ProductionSet
 
+TableRow :: struct {
+	entries: map[string]string
+}
+
+Table :: struct {
+	rows: map[string]^TableRow
+}
+
 FollowSet :: struct {
 	entries: map[string]string
 }
@@ -33,12 +41,73 @@ Production :: struct {
 Grammar :: struct {
 	productions: [dynamic]^Production,
 	index: map[string]^Production,
+	terminals: [dynamic]string,
 	first_sets: GrammarSets,
-	follow_sets: map[string]^FollowSet
+	follow_sets: map[string]^FollowSet,
+	parsing_table: ^Table
 }
 
 Matcher :: struct {
 	tokens: [dynamic]^Token,
+}
+
+init_table :: proc(grammar: ^Grammar) {
+	out := new(Table)
+	out.rows = make(map[string]^TableRow)
+	for production in grammar.productions {
+		row := new_table_row()
+		for terminal in grammar.terminals {
+			row.entries[strings.clone(terminal)] = ""
+		}
+		out.rows[production.name] = row
+	}
+	grammar.parsing_table = out
+}
+
+build_parsing_table :: proc(grammar: ^Grammar) {
+	for production in grammar.productions {
+		first_set := grammar.first_sets[production.name]
+		for k, _ in first_set {
+			if k != "empty" {
+				for matcher in production.matchers {
+					token := matcher.tokens[0]
+					if token.type == .Production {
+						token_first_set := grammar.first_sets[token.value]
+						if k in token_first_set {
+							out_str := fmt.tprintf("%s -> %s", production.name, to_string_matcher(matcher))
+							insert_into_table(grammar.parsing_table, strings.clone(production.name), strings.clone(k), out_str)
+							break
+						}
+					} else {
+						if k == token.value {
+							out_str := fmt.tprintf("%s -> %s", production.name, to_string_matcher(matcher))
+							insert_into_table(grammar.parsing_table, strings.clone(production.name), strings.clone(k), out_str)
+							break
+						}
+					}
+				}
+			} else {
+				follow_set := grammar.follow_sets[production.name]
+				for k, _ in follow_set.entries {
+					insert_into_table(grammar.parsing_table, strings.clone(production.name), strings.clone(k), fmt.tprintf("%s -> empty", production.name))
+				}
+			}
+		}
+	}
+}
+
+get_table_entry :: proc(table: ^Table, row: string, col: string) -> string {
+	return table.rows[row].entries[col]
+}
+
+insert_into_table :: proc(table: ^Table, row: string, col: string, value: string) {
+	table.rows[row].entries[col] = strings.clone(value)
+}
+
+new_table_row :: proc() -> ^TableRow {
+	out := new(TableRow)
+	out.entries = make(map[string]string)
+	return out
 }
 
 new_follow_set :: proc() -> ^FollowSet {
@@ -77,6 +146,7 @@ new_grammar :: proc() -> ^Grammar {
 	out := new(Grammar)
 	out.productions = make([dynamic]^Production)
 	out.index = make(map[string]^Production)
+	out.terminals = make([dynamic]string)
 	return out
 }
 
@@ -113,7 +183,7 @@ production_elr :: proc(grammar: ^Grammar, production: ^Production) {
 	}
 
 	for matcher in alphas {
-		unordered_remove(&matcher.tokens, 0)
+		ordered_remove(&matcher.tokens, 0)
 		append(&matcher.tokens, new_token(fmt.tprintf("%s_p", production.name), .Production))
 	}
 
@@ -126,6 +196,20 @@ production_elr :: proc(grammar: ^Grammar, production: ^Production) {
 
 	grammar_insert(grammar, prime)
 	grammar_insert(grammar, original)
+}
+
+init_terminals :: proc(grammar: ^Grammar) {
+	out := make([dynamic]string)
+	for production in grammar.productions {
+		for matcher in production.matchers {
+			for token in matcher.tokens {
+				if token.type == .Terminal || token.type == .Operator {
+					append(&out, token.value)
+				}
+			}
+		}
+	}
+	grammar.terminals = out
 }
 
 first_set :: proc(grammar: ^Grammar, token: ^Token) -> ProductionSet {
@@ -170,7 +254,6 @@ get_follow_sets :: proc(grammar: ^Grammar) -> map[string]^FollowSet {
 				for j := i - 1; j >= 0; j -= 1 {
 					curr_token := matcher.tokens[i]
 					prev_token := matcher.tokens[j]
-					fmt.printfln("Prev token: %s  Cur token: %s", prev_token.value, curr_token.value)
 					if prev_token.type != .Production {
 						break;
 					}
@@ -276,6 +359,15 @@ print_matcher :: proc(matcher: ^Matcher) {
 	}
 }
 
+to_string_matcher :: proc(matcher: ^Matcher) -> string {
+	builder := strings.builder_make()
+	for token in matcher.tokens {
+		strings.write_string(&builder, token.value)
+		strings.write_string(&builder, " ")
+	}
+	return strings.to_string(builder)
+}
+
 print_production :: proc(production: ^Production) {
 	fmt.printf("%s ::= ", production.name)
 	print_matcher(production.matchers[0])
@@ -307,7 +399,17 @@ print_grammar :: proc(grammar: ^Grammar) {
 		}
 		fmt.printf("\n")
 	}
-
+	fmt.println("+++PARSING TABLE+++")
+	for production in grammar.productions {
+		fmt.printf("%s ", production.name)
+		for terminal in grammar.terminals {
+			val := get_table_entry(grammar.parsing_table, production.name, terminal)
+			if val != "" {
+				fmt.printf("[%s:%s], ", terminal, val)
+			}
+		}
+		fmt.printf("\n")
+	}
 }
 
 
@@ -382,9 +484,12 @@ main :: proc() {
 		}
 	}
 	grammar_insert(grammar, prod_current)
-	elr_grammar := grammar_elr(grammar)
-	print_grammar(elr_grammar)
 
+	elr_grammar := grammar_elr(grammar)
+	init_terminals(elr_grammar)
+	init_table(elr_grammar)
+	build_parsing_table(elr_grammar)
+	print_grammar(elr_grammar)
 
 	// reader: bufio.Reader
 	// bufio.reader_init(&reader, os.stream_from_handle(os.stdin))
