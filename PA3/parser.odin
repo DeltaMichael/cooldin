@@ -163,7 +163,7 @@ grammar_parsing_table_build :: proc(grammar: ^Grammar) {
 			} else {
 				follow_set := grammar.follow_sets[production.name]
 				for k, _ in follow_set.entries {
-					table_insert(grammar.parsing_table, strings.clone(production.name), strings.clone(k), fmt.tprintf("%s -> empty", production.name))
+					table_insert(grammar.parsing_table, strings.clone(production.name), strings.clone(k), fmt.tprintf("%s -> empty ", production.name))
 				}
 			}
 		}
@@ -339,6 +339,10 @@ Table :: struct {
 
 TableRow :: struct {
 	entries: map[string]string
+}
+
+table_exists :: proc(table: ^Table, row: string, col: string) -> bool {
+	return row in table.rows && table.rows[row].entries[col] != ""
 }
 
 table_get :: proc(table: ^Table, row: string, col: string) -> string {
@@ -565,18 +569,12 @@ token_first_set :: proc(grammar: ^Grammar, token: ^Token) -> ProductionSet {
 
 main :: proc() {
 	grammar := grammar_new_from_file(os.args[1])
-	first_sets := grammar_first_sets_get(grammar)
-	grammar.first_sets = first_sets
-	follow_sets := grammar_follow_sets_get(grammar)
-	grammar.follow_sets = follow_sets
-	// fmt.print(grammar_to_string(grammar))
-	// elr_grammar := grammar_elr(grammar)
+	elr_grammar := grammar_elr(grammar)
 
-	// grammar_terminals_init(elr_grammar)
-	// grammar_parsing_table_init(elr_grammar)
-	// grammar_parsing_table_build(elr_grammar)
-	grammar_print(grammar)
-	// fmt.print(grammar_to_string(elr_grammar))
+	grammar_terminals_init(elr_grammar)
+	grammar_parsing_table_init(elr_grammar)
+	grammar_parsing_table_build(elr_grammar)
+	grammar_print(elr_grammar)
 
 	// reader: bufio.Reader
 	// bufio.reader_init(&reader, os.stream_from_handle(os.stdin))
@@ -698,4 +696,34 @@ test_first_sets :: proc(t: ^testing.T) {
 		}
 	}
 
+}
+
+@(test)
+test_parser_table :: proc(t: ^testing.T) {
+	expected_table := map[string]map[string]string {
+		"s" = map[string]string { "+" = "", "*" = "", "(" = "s -> e ", ")" = "", "INT" = "s -> e ", "$" = ""},
+		"e" = map[string]string { "+" = "", "*" = "", "(" = "e -> t e_p ", ")" = "", "INT" = "e -> t e_p ", "$" = ""},
+		"e_p" = map[string]string { "+" = "e_p -> + t e_p ", "*" = "", "(" = "", ")" = "e_p -> empty ", "INT" = "", "$" = "e_p -> empty "},
+		"t" = map[string]string { "+" = "", "*" = "", "(" = "t -> f t_p ", ")" = "", "INT" = "t -> f t_p ", "$" = ""},
+		"t_p" = map[string]string { "+" = "t_p -> empty ", "*" = "t_p -> * f t_p ", "(" = "", ")" = "t_p -> empty ", "INT" = "", "$" = "t_p -> empty "},
+		"f" = map[string]string { "+" = "", "*" = "", "(" = "f -> ( e ) ", ")" = "", "INT" = "f -> INT ", "$" = ""}
+	}
+
+	grammar := grammar_new_from_file("./test_specs/simple.spec")
+	elr_grammar := grammar_elr(grammar)
+
+	grammar_terminals_init(elr_grammar)
+	grammar_parsing_table_init(elr_grammar)
+	grammar_parsing_table_build(elr_grammar)
+
+	for k, v in expected_table {
+		for term_k, term_v in v {
+			if term_v == "" {
+				testing.expect(t, !table_exists(elr_grammar.parsing_table, k, term_k), fmt.tprintf("table[%s][%s] = %s should not exist!", k, term_k, table_get(elr_grammar.parsing_table, k, term_k)))
+			} else {
+				testing.expect(t, table_exists(elr_grammar.parsing_table, k, term_k), fmt.tprintf("table[%s][%s] = %s SHOULD exist!", k, term_k, term_v))
+				testing.expect(t, table_get(elr_grammar.parsing_table, k, term_k) == term_v, fmt.tprintf("table[%s][%s] = %s != %s", k, term_k, table_get(elr_grammar.parsing_table, k, term_k), term_v))
+			}
+		}
+	}
 }
