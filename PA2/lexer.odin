@@ -7,6 +7,7 @@ import "core:os"
 import "core:bufio"
 import "core:strings"
 import "core:unicode"
+import "core:unicode/utf8"
 
 LexerMode :: enum {
 	Normal,
@@ -58,8 +59,11 @@ Lexer :: struct {
 	word: strings.Builder,
 	keywords: map[string]TokenType,
 	singles: map[rune]rune,
-	singles_with_double: map[rune]rune,
-	doubles: map[string]TokenType,
+	comments: map[string]string,
+	single_line_comment: string,
+	multi_line_comment_open: string,
+	multi_line_comment_close: string,
+	string_delimiter: rune,
 	tokens: [dynamic]^Token,
 	lineno: int,
 	current: rune,
@@ -67,18 +71,6 @@ Lexer :: struct {
 	next: rune,
 	mode: LexerMode,
 	is_at_end: bool
-}
-
-is_in_charset :: proc(lexer: ^Lexer, character: rune) -> bool {
-	switch character {
-	case 'A'..='Z', 'a'..='z', '0'..='9', '_', '"', '\'', '>':
-		return true
-	case '\n', '\r', '\t', '\v', ' ', '\f':
-		return true
-	}
-	if character in lexer.singles { return true }
-	if character in lexer.singles_with_double { return true }
-	return false
 }
 
 is_identifier :: proc(character: rune) -> bool {
@@ -126,6 +118,9 @@ new_lexer :: proc(reader: bufio.Reader) -> ^Lexer {
 			"of" = .OF,
 			"not" = .NOT,
 			"true" = .BOOL_CONST,
+			"<=" = .LE,
+			"<-" = .ASSIGN,
+			"=>" = .DARROW,
 	}
 	out.singles = map[rune]rune {
 		'{' = '{',
@@ -139,18 +134,22 @@ new_lexer :: proc(reader: bufio.Reader) -> ^Lexer {
 		':' = ':',
 		'~' = '~',
 		'@' = '@',
-	}
-	out.singles_with_double = map[rune]rune {
-		'<' = '-',
-		'(' = '*',
-		'*' = ')',
+		'=' = '=',
+		'<' = '<',
 		'-' = '-',
-		'=' = '>',
+		'(' = '(',
+		'*' = '*',
 	}
-	out.doubles = map[string]TokenType {
-		"<=" = .LE,
-		"<-" = .ASSIGN,
-		"=>" = .DARROW,
+
+	out.single_line_comment = "--"
+	out.multi_line_comment_open = "(*"
+	out.multi_line_comment_close = "*)"
+	out.string_delimiter = '"'
+
+	out.comments = map[string]string {
+		out.single_line_comment = out.single_line_comment,
+		out.multi_line_comment_open = out.multi_line_comment_open,
+		out.multi_line_comment_close = out.multi_line_comment_close
 	}
 	out.current_type = .NONE
 
@@ -195,8 +194,6 @@ lexer_save :: proc(lexer: ^Lexer) {
 			} else {
 				append(&lexer.tokens, new_token(to_lower, lexer.keywords[to_lower], lexer.lineno))
 			}
-		} else if word in lexer.doubles {
-			append(&lexer.tokens, new_token(strings.clone(word), lexer.doubles[word], lexer.lineno))
 		} else {
 			append(&lexer.tokens, new_token(strings.clone(word), lexer.current_type, lexer.lineno))
 		}
@@ -229,44 +226,25 @@ lexer_matches_next :: proc(lexer: ^Lexer) -> bool {
 	}
 }
 
-lexer_handle_double_operator :: proc(lexer: ^Lexer) {
-	switch {
-	case lexer.current == '<' && lexer.next == '=':
-		// LE
-		strings.write_rune(&lexer.word, lexer.current)
-		lexer_advance(lexer)
-		strings.write_rune(&lexer.word, lexer.current)
-		lexer_save(lexer)
-	case lexer.current == '<' && lexer.next == '-':
-		// ASSIGNMENT
-		strings.write_rune(&lexer.word, lexer.current)
-		lexer_advance(lexer)
-		strings.write_rune(&lexer.word, lexer.current)
-		lexer_save(lexer)
-	case lexer.current == '=' && lexer.next == '>':
-		// DARROW
-		strings.write_rune(&lexer.word, lexer.current)
-		lexer_advance(lexer)
-		strings.write_rune(&lexer.word, lexer.current)
-		lexer_save(lexer)
-	case lexer.current == '-' && lexer.next == '-':
+lexer_handle_comment :: proc(lexer: ^Lexer, op_cand: string) {
+	switch op_cand {
+	case lexer.single_line_comment:
 		// PROCESS SINGLE-LINE COMMENT
 		lexer_advance(lexer)
+
 		lexer_advance(lexer)
 		lexer.mode = .Comment
-	case lexer.current == '(' && lexer.next == '*':
+	case lexer.multi_line_comment_open:
 		// PROCESS MULTI-LINE COMMENT
 		lexer_advance(lexer)
+
 		lexer_advance(lexer)
 		lexer.mode = .MultilineComment
-	case lexer.current == '*' && lexer.next == ')':
+	case lexer.multi_line_comment_close:
 		// ERROR
-		lexer_save_err(lexer, "Unmatched *)")
 		lexer_advance(lexer)
-	case:
-		// MUST BE A SINGLE OPERATOR THEN
-		strings.write_rune(&lexer.word, lexer.current)
-		lexer_save(lexer)
+		lexer.mode = .Normal
+		lexer_save_err(lexer, fmt.tprintf("Unmatched %s", lexer.multi_line_comment_close))
 	}
 }
 
@@ -287,14 +265,27 @@ lexer_process :: proc(lexer: ^Lexer) {
 			lexer.current_type = .TYPEID
 		case unicode.is_digit(lexer.current):
 			lexer.current_type = .INT_CONST
+		case lexer.current in lexer.singles:
+			runes := []rune {lexer.current, lexer.next}
+			op_cand := utf8.runes_to_string(runes)
+			if op_cand in lexer.comments {
+				lexer_handle_comment(lexer, op_cand)
+			} else {
+				strings.write_rune(&lexer.word, lexer.current)
+
+				if op_cand in lexer.keywords {
+					lexer_advance(lexer)
+					strings.write_rune(&lexer.word, lexer.current)
+				}
+
+				lexer_save(lexer)
+			}
+// TODO: What if comments don't have overlap with operators?
+//		case lexer.current in lexer.singles_with_double:
+//			lexer_handle_double_operator(lexer)
 		case unicode.is_space(lexer.current):
 			lexer_inc_lineno(lexer)
-		case lexer.current in lexer.singles:
-			strings.write_rune(&lexer.word, lexer.current)
-			lexer_save(lexer)
-		case lexer.current in lexer.singles_with_double:
-			lexer_handle_double_operator(lexer)
-		case lexer.current == '"':
+		case lexer.current == lexer.string_delimiter:
 			lexer_advance(lexer)
 			lexer.mode = .String
 		case:
@@ -442,7 +433,6 @@ main :: proc() {
 							lexer_advance(lexer)
 						case '"':
 							string_closed = true
-							// lexer_advance(lexer)
 							break str_loop
 						case :
 							strings.write_rune(&lexer.word, lexer.current)
