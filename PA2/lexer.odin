@@ -248,6 +248,12 @@ lexer_handle_comment :: proc(lexer: ^Lexer, op_cand: string) {
 	}
 }
 
+lexer_get_buffer :: proc(lexer: ^Lexer) -> string {
+	runes := []rune {lexer.current, lexer.next}
+	buffer := utf8.runes_to_string(runes)
+	return buffer
+}
+
 // Types of tokens to process
 // 1. Single-Char Operators
 // 2. Double-Char Operators
@@ -266,8 +272,7 @@ lexer_process :: proc(lexer: ^Lexer) {
 		case unicode.is_digit(lexer.current):
 			lexer.current_type = .INT_CONST
 		case lexer.current in lexer.singles:
-			runes := []rune {lexer.current, lexer.next}
-			op_cand := utf8.runes_to_string(runes)
+			op_cand := lexer_get_buffer(lexer)
 			if op_cand in lexer.comments {
 				lexer_handle_comment(lexer, op_cand)
 			} else {
@@ -342,10 +347,11 @@ main :: proc() {
 					// process multi-line comment
 					counter := 1
 					for !lexer.is_at_end {
-						if lexer.current == '*' && lexer.next == ')' {
+						buf := lexer_get_buffer(lexer)
+						if buf == lexer.multi_line_comment_close {
 							counter -= 1
 						}
-						if lexer.current == '(' && lexer.next == '*' {
+						if buf == lexer.multi_line_comment_open {
 							counter += 1
 						}
 						if counter == 0 {
@@ -398,40 +404,16 @@ main :: proc() {
 							strings.write_rune(&lexer.word, 'f')
 							count += 1
 							lexer_advance(lexer)
-						case '\022':
-							strings.write_rune(&lexer.word, '\\')
-							strings.write_rune(&lexer.word, '0')
-							strings.write_rune(&lexer.word, '2')
-							strings.write_rune(&lexer.word, '2')
-							count += 1
-							lexer_advance(lexer)
-						case '\033':
-							strings.write_rune(&lexer.word, '\\')
-							strings.write_rune(&lexer.word, '0')
-							strings.write_rune(&lexer.word, '3')
-							strings.write_rune(&lexer.word, '3')
-							count += 1
-							lexer_advance(lexer)
-						case '\013':
-							strings.write_rune(&lexer.word, '\\')
-							strings.write_rune(&lexer.word, '0')
-							strings.write_rune(&lexer.word, '1')
-							strings.write_rune(&lexer.word, '3')
-							count += 1
-							lexer_advance(lexer)
-						case '\015':
-							strings.write_rune(&lexer.word, '\\')
-							strings.write_rune(&lexer.word, '0')
-							strings.write_rune(&lexer.word, '1')
-							strings.write_rune(&lexer.word, '5')
-							count += 1
-							lexer_advance(lexer)
 						case '\b':
 							strings.write_rune(&lexer.word, '\\')
 							strings.write_rune(&lexer.word, 'b')
 							count += 1
 							lexer_advance(lexer)
-						case '"':
+						case '\022', '\033', '\013', '015'
+							strings.write_string(&lexer.word, fmt.tprintf("\\%03o", lexer.current))
+							count += 1
+							lexer_advance(lexer)
+						case lexer.string_delimiter:
 							string_closed = true
 							break str_loop
 						case :
