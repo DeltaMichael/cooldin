@@ -289,6 +289,46 @@ grammar_follow_sets_get :: proc(grammar: ^Grammar) -> map[string]^FollowSet {
 	return out
 }
 
+grammar_parse :: proc(grammar: ^Grammar, lexer_stack: ^[dynamic]^LexerToken) {
+	table := grammar.parsing_table
+	prod_stack := make([dynamic]^Token)
+	append(&prod_stack, token_new(grammar.productions[0].name, .Production))
+	for len(prod_stack) > 0 {
+		prod_top := prod_stack[len(prod_stack) - 1]
+		lex_top := lexer_stack[len(lexer_stack) - 1]
+		switch prod_top.type {
+			case .Production:
+				pop(&prod_stack)
+				if !table_exists(grammar.parsing_table, prod_top.value, lex_top.type) {
+					fmt.println("SHOULD HANDLE SYNTAX ERROR")
+					break;
+				}
+				matcher := table_get(grammar.parsing_table, prod_top.value, lex_top.type)
+				for i := len(matcher.tokens) - 1; i <= 0; i += 1 {
+					append(&prod_stack, matcher.tokens[i])
+				}
+			case .Empty:
+				pop(&prod_stack)
+			case .Operator:
+				if prod_top.value == lex_top.type {
+					pop(&prod_stack)
+					pop(lexer_stack)
+				} else {
+					fmt.println("SHOULD HANDLE ERROR WHEN OPERATORS DON'T MATCH")
+					break
+				}
+			case .Terminal:
+				if prod_top.value == lex_top.type {
+					pop(&prod_stack)
+					pop(lexer_stack)
+				} else {
+					fmt.println("SHOULD HANDLE ERROR WHEN TERMINALS DON'T MATCH")
+					break
+				}
+		}
+	}
+}
+
 grammar_print :: proc(grammar: ^Grammar) {
 	fmt.println("+++PRODUCTIONS+++")
 	for prod in grammar.productions {
@@ -567,14 +607,41 @@ token_first_set :: proc(grammar: ^Grammar, token: ^Token) -> ProductionSet {
 	return out
 }
 
+/* LEXER_TOKEN TYPE DEFINITIONS AND FUNCTIONS */
+
+LexerToken :: struct {
+	lineno: u32,
+	type: string,
+	value: string
+}
+
+lexer_token_new :: proc(lineno: u32, type: string, value: string) -> ^LexerToken {
+	out := new(LexerToken)
+	out.lineno = lineno
+	out.type = type
+	out.value = value
+	return out
+}
+
 main :: proc() {
-	grammar := grammar_new_from_file(os.args[1])
+	grammar := grammar_new_from_file("./test_specs/simple.spec")
 	elr_grammar := grammar_elr(grammar)
 
 	grammar_terminals_init(elr_grammar)
 	grammar_parsing_table_init(elr_grammar)
 	grammar_parsing_table_build(elr_grammar)
-	grammar_print(elr_grammar)
+
+	lexer_tokens := make([dynamic]^LexerToken)
+	append(&lexer_tokens, lexer_token_new(1, "INT", "3"))
+	append(&lexer_tokens, lexer_token_new(1, "*", ""))
+	append(&lexer_tokens, lexer_token_new(1, ")", ""))
+	append(&lexer_tokens, lexer_token_new(1, "INT", "2"))
+	append(&lexer_tokens, lexer_token_new(1, "+", ""))
+	append(&lexer_tokens, lexer_token_new(1, "INT", "2"))
+	append(&lexer_tokens, lexer_token_new(1, "(", ""))
+
+	grammar_parse(elr_grammar, &lexer_tokens)
+
 
 	// reader: bufio.Reader
 	// bufio.reader_init(&reader, os.stream_from_handle(os.stdin))
@@ -727,4 +794,24 @@ test_parser_table :: proc(t: ^testing.T) {
 			}
 		}
 	}
+}
+
+@(test)
+test_parsing_simple :: proc(t: ^testing.T) {
+	grammar := grammar_new_from_file("./test_specs/simple.spec")
+	elr_grammar := grammar_elr(grammar)
+
+	grammar_terminals_init(elr_grammar)
+	grammar_parsing_table_init(elr_grammar)
+	grammar_parsing_table_build(elr_grammar)
+
+	lexer_tokens := make([dynamic]^LexerToken)
+	append(&lexer_tokens, lexer_token_new(1, "INT", "3"))
+	append(&lexer_tokens, lexer_token_new(1, "*", ""))
+	append(&lexer_tokens, lexer_token_new(1, ")", ""))
+	append(&lexer_tokens, lexer_token_new(1, "INT", "2"))
+	append(&lexer_tokens, lexer_token_new(1, "+", ""))
+	append(&lexer_tokens, lexer_token_new(1, "INT", "2"))
+	append(&lexer_tokens, lexer_token_new(1, "(", ""))
+	grammar_parse(elr_grammar, &lexer_tokens)
 }
