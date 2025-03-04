@@ -102,7 +102,6 @@ new_lexer :: proc(reader: bufio.Reader) -> ^Lexer {
 			"else" = .ELSE,
 			"then" = .THEN,
 			"class" = .CLASS,
-			"false" = .BOOL_CONST,
 			"fi" = .FI,
 			"if" = .IF,
 			"in" = .IN,
@@ -118,6 +117,7 @@ new_lexer :: proc(reader: bufio.Reader) -> ^Lexer {
 			"of" = .OF,
 			"not" = .NOT,
 			"true" = .BOOL_CONST,
+			"false" = .BOOL_CONST,
 			"<=" = .LE,
 			"<-" = .ASSIGN,
 			"=>" = .DARROW,
@@ -157,6 +157,8 @@ new_lexer :: proc(reader: bufio.Reader) -> ^Lexer {
 	return out
 }
 
+// Simple operations
+
 lexer_inc_lineno :: proc(lexer: ^Lexer) {
 	if lexer.current == '\n' {
 		lexer.lineno += 1
@@ -180,16 +182,12 @@ lexer_advance :: proc(lexer: ^Lexer) {
 	lexer_read_char(lexer)
 }
 
-lexer_peek :: proc(lexer: ^Lexer) -> rune {
-	return lexer.next
-}
-
 lexer_save :: proc(lexer: ^Lexer) {
 	if strings.builder_len(lexer.word) > 0 {
 		word := strings.to_string(lexer.word)
 		to_lower := strings.to_lower(word)
 		if to_lower in lexer.keywords {
-			if lexer.current_type == .TYPEID && (to_lower == "true" || to_lower == "false") {
+			if lexer.current_type == .TYPEID && lexer.keywords[to_lower] == .BOOL_CONST {
 				append(&lexer.tokens, new_token(strings.clone(word), .TYPEID, lexer.lineno))
 			} else {
 				append(&lexer.tokens, new_token(to_lower, lexer.keywords[to_lower], lexer.lineno))
@@ -215,18 +213,14 @@ lexer_clear_word :: proc(lexer: ^Lexer) {
 	strings.builder_reset(&lexer.word)
 }
 
-lexer_matches_next :: proc(lexer: ^Lexer) -> bool {
-	#partial switch lexer.current_type {
-		case .OBJECTID, .TYPEID:
-			return is_identifier(lexer.next)
-		case .INT_CONST:
-			return unicode.is_digit(lexer.next)
-		case:
-			return false
-	}
+lexer_get_buffer :: proc(lexer: ^Lexer) -> string {
+	runes := []rune {lexer.current, lexer.next}
+	buffer := utf8.runes_to_string(runes)
+	return buffer
 }
 
-lexer_handle_comment :: proc(lexer: ^Lexer, op_cand: string) {
+// State transitions
+lexer_transition_comment :: proc(lexer: ^Lexer, op_cand: string) {
 	switch op_cand {
 	case lexer.single_line_comment:
 		// PROCESS SINGLE-LINE COMMENT
@@ -248,11 +242,32 @@ lexer_handle_comment :: proc(lexer: ^Lexer, op_cand: string) {
 	}
 }
 
-lexer_get_buffer :: proc(lexer: ^Lexer) -> string {
-	runes := []rune {lexer.current, lexer.next}
-	buffer := utf8.runes_to_string(runes)
-	return buffer
+lexer_transition_string :: proc(lexer: ^Lexer) {
+	lexer_advance(lexer)
+	lexer.mode = .String
 }
+
+lexer_matches_next :: proc(lexer: ^Lexer) -> bool {
+	#partial switch lexer.current_type {
+		case .OBJECTID, .TYPEID:
+			return is_identifier(lexer.next)
+		case .INT_CONST:
+			return unicode.is_digit(lexer.next)
+		case:
+			return false
+	}
+}
+
+lexer_error_unsupported_chars :: proc(lexer: ^Lexer) {
+	if lexer.current == '\\' {
+		lexer_save_err(lexer, fmt.tprintf("\\%c", lexer.current))
+	} else if int(lexer.current) <= 31 {
+		lexer_save_err(lexer, fmt.tprintf("\\%03d", int(lexer.current)))
+	} else {
+		lexer_save_err(lexer, fmt.tprintf("%c", lexer.current))
+	}
+}
+
 
 // Types of tokens to process
 // 1. Single-Char Operators
@@ -264,7 +279,24 @@ lexer_get_buffer :: proc(lexer: ^Lexer) -> string {
 // 7. Integers -> [0-9]{1}[0-9]*
 lexer_process :: proc(lexer: ^Lexer) {
 	if lexer.current_type == .NONE {
+		op_cand := lexer_get_buffer(lexer)
 		switch {
+			case op_cand in lexer.comments:
+				lexer_transition_comment(lexer, op_cand)
+				return
+			case lexer.current == lexer.string_delimiter:
+				lexer_transition_string(lexer)
+				return
+		}
+		lexer_process_first_char(lexer)
+	}
+}
+
+lexer_process_first_char :: proc(lexer: ^Lexer) {
+	op_cand := lexer_get_buffer(lexer)
+	switch {
+		case unicode.is_space(lexer.current):
+			lexer_inc_lineno(lexer)
 		case unicode.is_lower(lexer.current):
 			lexer.current_type = .OBJECTID
 		case unicode.is_upper(lexer.current):
@@ -272,46 +304,41 @@ lexer_process :: proc(lexer: ^Lexer) {
 		case unicode.is_digit(lexer.current):
 			lexer.current_type = .INT_CONST
 		case lexer.current in lexer.singles:
-			op_cand := lexer_get_buffer(lexer)
-			if op_cand in lexer.comments {
-				lexer_handle_comment(lexer, op_cand)
-			} else {
+			strings.write_rune(&lexer.word, lexer.current)
+			if op_cand in lexer.keywords {
+				lexer_advance(lexer)
 				strings.write_rune(&lexer.word, lexer.current)
-
-				if op_cand in lexer.keywords {
-					lexer_advance(lexer)
-					strings.write_rune(&lexer.word, lexer.current)
-				}
-
-				lexer_save(lexer)
 			}
-// TODO: What if comments don't have overlap with operators?
-//		case lexer.current in lexer.singles_with_double:
-//			lexer_handle_double_operator(lexer)
-		case unicode.is_space(lexer.current):
-			lexer_inc_lineno(lexer)
-		case lexer.current == lexer.string_delimiter:
-			lexer_advance(lexer)
-			lexer.mode = .String
+			lexer_save(lexer)
 		case:
-			if lexer.current == '\\' {
-				lexer_save_err(lexer, fmt.tprintf("\\%c", lexer.current))
-			} else if int(lexer.current) <= 31 {
-				lexer_save_err(lexer, fmt.tprintf("\\%03d", int(lexer.current)))
-			} else {
-				lexer_save_err(lexer, fmt.tprintf("%c", lexer.current))
-			}
-		}
+			lexer_error_unsupported_chars(lexer)
 	}
+}
 
+lexer_process_rest :: proc(lexer: ^Lexer) {
 	#partial switch lexer.current_type {
-	case .NONE:
-		// do nothing, it's already handled
 	case .OBJECTID, .TYPEID, .INT_CONST:
 		strings.write_rune(&lexer.word, lexer.current)
 		if !lexer_matches_next(lexer) {
 			lexer_save(lexer)
 			lexer.current_type = .NONE
+		}
+	case:
+		// do nothing
+	}
+
+}
+
+lexer_tokens_print :: proc(lexer: ^Lexer) {
+	fmt.printfln("#name \"%s\"", os.args[1])
+	for token in lexer.tokens {
+		#partial switch token.type {
+		case .NONE:
+			fmt.printfln("#%d '%s'", token.lineno, token.lexeme)
+		case .OBJECTID, .TYPEID, .INT_CONST, .BOOL_CONST, .STR_CONST, .ERROR:
+			fmt.printfln("#%d %s %s", token.lineno, fmt.tprint(token.type), token.lexeme)
+		case:
+			fmt.printfln("#%d %s", token.lineno, fmt.tprint(token.type))
 		}
 	}
 }
@@ -335,6 +362,7 @@ main :: proc() {
 				case .Normal:
 					lexer_advance(lexer)
 					lexer_process(lexer)
+					lexer_process_rest(lexer)
 				case .Comment:
 					// process comment
 					lineno := lexer.lineno
@@ -409,7 +437,7 @@ main :: proc() {
 							strings.write_rune(&lexer.word, 'b')
 							count += 1
 							lexer_advance(lexer)
-						case '\022', '\033', '\013', '015'
+						case '\022', '\033', '\013', '\015':
 							strings.write_string(&lexer.word, fmt.tprintf("\\%03o", lexer.current))
 							count += 1
 							lexer_advance(lexer)
@@ -440,16 +468,6 @@ main :: proc() {
 			}
 		}
 		lexer_save(lexer)
-		fmt.printfln("#name \"%s\"", os.args[1])
-		for token in lexer.tokens {
-			#partial switch token.type {
-			case .NONE:
-				fmt.printfln("#%d '%s'", token.lineno, token.lexeme)
-			case .OBJECTID, .TYPEID, .INT_CONST, .BOOL_CONST, .STR_CONST, .ERROR:
-				fmt.printfln("#%d %s %s", token.lineno, fmt.tprint(token.type), token.lexeme)
-			case:
-				fmt.printfln("#%d %s", token.lineno, fmt.tprint(token.type))
-			}
-		}
+		lexer_tokens_print(lexer)
 	}
 }
